@@ -4,14 +4,16 @@ import { OAuth2Client } from 'google-auth-library';
 import { getAuth } from 'firebase-admin/auth';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 
-// Initialize Firebase Admin if not already initialized
+
+// ✅ Fix 1: Tell Next.js *NOT* to build this route at build time
+export const dynamic = 'force-dynamic';
+
+// ✅ Fix 2: Use a single JSON env variable for the service account
 if (!getApps().length) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
+
   initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_ADMIN_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    }),
+    credential: cert(serviceAccount),
   });
 }
 
@@ -37,47 +39,40 @@ export async function POST(request: Request) {
 
     // Verify the Firebase ID token
     const idToken = authHeader.split('Bearer ')[1];
-    try {
-      const decodedToken = await getAuth().verifyIdToken(idToken);
-      
-      // Get the user's Google OAuth tokens from Firebase
-      const user = await getAuth().getUser(decodedToken.uid);
-      const customClaims = user.customClaims || {};
-      
-      if (!customClaims.googleAccessToken) {
-        return NextResponse.json(
-          { error: 'Google authentication required. Please sign in with Google first.' },
-          { status: 401 }
-        );
-      }
+    const decodedToken = await getAuth().verifyIdToken(idToken);
 
-      // Create OAuth2 client with Firebase tokens
-      const oauth2Client = new OAuth2Client();
-      oauth2Client.setCredentials({
-        access_token: customClaims.googleAccessToken,
-        refresh_token: customClaims.googleRefreshToken,
-      });
+    // Get the user's Google OAuth tokens from Firebase
+    const user = await getAuth().getUser(decodedToken.uid);
+    const customClaims = user.customClaims || {};
 
-      const result = await exportToGoogleSheets(data, oauth2Client);
-
-      if (!result.success) {
-        return NextResponse.json(
-          { error: result.error },
-          { status: 500 }
-        );
-      }
-
-      return NextResponse.json({
-        url: result.url,
-        message: 'Successfully exported to Google Sheets'
-      });
-    } catch (error) {
-      console.error('Error verifying Firebase token:', error);
+    if (!customClaims.googleAccessToken) {
       return NextResponse.json(
-        { error: 'Invalid authentication token' },
+        { error: 'Google authentication required. Please sign in with Google first.' },
         { status: 401 }
       );
     }
+
+    // Create OAuth2 client with Firebase tokens
+    const oauth2Client = new OAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: customClaims.googleAccessToken,
+      refresh_token: customClaims.googleRefreshToken,
+    });
+
+    const result = await exportToGoogleSheets(data, oauth2Client);
+
+    if (!result.success) {
+      return NextResponse.json(
+        { error: result.error },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      url: result.url,
+      message: 'Successfully exported to Google Sheets'
+    });
+
   } catch (error) {
     console.error('Error in sheets export route:', error);
     return NextResponse.json(
@@ -85,4 +80,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-} 
+}
